@@ -1,0 +1,22 @@
+{
+  "name": "dash_ti",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@google/genai": "^1.31.0",
+    "axios": "^1.13.2",
+    "dotenv": "^17.2.3",
+    "googleapis": "^167.0.0",
+    "imapflow": "^1.1.1",
+    "mailparser": "^3.9.0",
+    "node-imap": "^0.9.6",
+    "open": "^11.0.0"
+  }
+}

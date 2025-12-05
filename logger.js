@@ -41,7 +41,8 @@ async function createTable() {
         timestamp DATETIME NOT NULL DEFAULT GETDATE(),
         code NVARCHAR(50) NOT NULL,
         level NVARCHAR(50) NOT NULL,
-        message NVARCHAR(MAX) NOT NULL
+        message NVARCHAR(MAX) NOT NULL,
+        status NVARCHAR(50) NOT NULL DEFAULT 'OK'
       )
     `;
     try {
@@ -59,18 +60,30 @@ async function initialize() {
     return initializationPromise;
 }
 
-async function log(level, message, code) {
+async function log(level, message, code, status = 'OK', timestamp = null) {
   try {
     await initialize();
     const db_pool = await connect();
     const request = db_pool.request();
+
+    const columns = 'level, message, code, status' + (timestamp ? ', timestamp' : '');
+    const values = '@level, @message, @code, @status' + (timestamp ? ', @timestamp' : '');
+
     const logQuery = `
-      INSERT INTO OperationLogs (level, message, code)
-      VALUES (@level, @message, @code)
+      INSERT INTO OperationLogs (${columns})
+      VALUES (${values})
     `;
     request.input('level', sql.NVarChar, level);
     request.input('message', sql.NVarChar, message);
     request.input('code', sql.NVarChar, code);
+    request.input('status', sql.NVarChar, status);
+    if (timestamp) {
+      // Convert dd/mm/yyyy hh:mm:ss to yyyy-mm-dd hh:mm:ss for SQL Server
+      const [datePart, timePart] = timestamp.split(' ');
+      const [day, month, year] = datePart.split('/');
+      const isoTimestamp = `${year}-${month}-${day} ${timePart}`;
+      request.input('timestamp', sql.NVarChar, isoTimestamp);
+    }
     await request.query(logQuery);
   } catch (err) {
     console.error('Error writing to log: ', err);

@@ -111,7 +111,7 @@ async function analyzeContentWithGemini(content, prompt) {
   // Calcula a contagem aproximada de tokens para fins de log
   const tokenCount = Math.ceil(fullPrompt.length / 4); 
   console.log(`\n--- Iniciando Análise Gemini --- (Tokens Estimados: ~${tokenCount})`);
-  log('info', `Gemini Request: ${prompt}`);
+  log('info', `Gemini Request: ${prompt}`, 'gemini');
   
   try {
     const response = await ai.models.generateContent({
@@ -144,7 +144,7 @@ async function analyzeContentWithGemini(content, prompt) {
  */
 async function checkNobreakStatus(url) {
   console.log(`\n### ⚡️ Análise de Nobreak: Lendo URL: ${url}`);
-  log('info', `Checking Nobreak status at ${url}`);
+  log('info', `Checking Nobreak status at ${url}`, 'nobreak');
   try {
     const response = await axios.get(url, { timeout: 10000 });
     const htmlContent = response.data;
@@ -174,7 +174,7 @@ async function checkNobreakStatus(url) {
  */
 async function checkEmailForErrors() {
     console.log(`\n### 📧 Análise de E-mail: Buscando de ${SENDER_TO_MONITOR} via Gmail API`);
-    log('info', `Checking email from ${SENDER_TO_MONITOR}`);
+    log('info', `Checking email from ${SENDER_TO_MONITOR}`, 'email');
     
     let auth;
     try {
@@ -272,7 +272,7 @@ async function checkEmailForErrors() {
  */
 async function checkXcopyLogSuccess(logFilePath) {
   console.log(`\n### 📄 Análise de Log: Lendo arquivo: ${logFilePath}`);
-  log('info', `Checking xcopy log file: ${logFilePath}`);
+  log('info', `Checking xcopy log file: ${logFilePath}`, 'xcopy');
   try {
     // Usa fsp (fs/promises)
     const logContent = await fsp.readFile(logFilePath, 'utf-8');

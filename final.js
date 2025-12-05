@@ -11,6 +11,7 @@ import { GoogleGenAI } from "@google/genai";
 import axios from 'axios';
 import * as fsp from 'node:fs/promises'; // Importa 'fs/promises' com prefixo 'node:'
 import * as dotenv from 'dotenv';
+import { log, initialize } from './logger.js';
 
 // Carrega variáveis de ambiente do arquivo .env
 dotenv.config();
@@ -110,6 +111,7 @@ async function analyzeContentWithGemini(content, prompt) {
   // Calcula a contagem aproximada de tokens para fins de log
   const tokenCount = Math.ceil(fullPrompt.length / 4); 
   console.log(`\n--- Iniciando Análise Gemini --- (Tokens Estimados: ~${tokenCount})`);
+  log('info', `Gemini Request: ${prompt}`);
   
   try {
     const response = await ai.models.generateContent({
@@ -121,9 +123,11 @@ async function analyzeContentWithGemini(content, prompt) {
       }
     });
 
+    log('info', `Gemini Response: ${response.text.trim()}`);
     return response.text.trim();
   } catch (error) {
     console.error("❌ ERRO ao comunicar com o Gemini:", error.message);
+    log('error', `Gemini Error: ${error.message}`);
     return "Erro na análise: Não foi possível obter resposta do Gemini.";
   }
 }
@@ -140,6 +144,7 @@ async function analyzeContentWithGemini(content, prompt) {
  */
 async function checkNobreakStatus(url) {
   console.log(`\n### ⚡️ Análise de Nobreak: Lendo URL: ${url}`);
+  log('info', `Checking Nobreak status at ${url}`);
   try {
     const response = await axios.get(url, { timeout: 10000 });
     const htmlContent = response.data;
@@ -147,11 +152,13 @@ async function checkNobreakStatus(url) {
     const prompt = "No código HTML fornecido, verifique se o status do nobreak indica que ele está operando 'na bateria' ou 'em bypass/rede normal'. Diga se o status é de alerta (bateria) ou normal. Responda de forma concisa.";
     
     const analysisResult = await analyzeContentWithGemini(htmlContent, prompt);
+    log('info', `Nobreak status: ${analysisResult}`);
     
     return analysisResult;
 
   } catch (error) {
     console.error(`❌ ERRO ao ler a página da intranet: ${error.message}`);
+    log('error', `Error checking Nobreak status: ${error.message}`);
     return "Erro: Não foi possível acessar a URL da intranet ou timeout.";
   }
 }
@@ -167,11 +174,13 @@ async function checkNobreakStatus(url) {
  */
 async function checkEmailForErrors() {
     console.log(`\n### 📧 Análise de E-mail: Buscando de ${SENDER_TO_MONITOR} via Gmail API`);
+    log('info', `Checking email from ${SENDER_TO_MONITOR}`);
     
     let auth;
     try {
         auth = await authorize();
     } catch (e) {
+        log('error', `Authentication error: ${e.message}`);
         return `Erro de Autenticação: ${e.message}`;
     }
 
@@ -188,6 +197,7 @@ async function checkEmailForErrors() {
         });
 
         if (!res.data.messages || res.data.messages.length === 0) {
+            log('info', 'No new emails from the monitored sender.');
             return "Nenhum e-mail encontrado do remetente monitorado no Gmail.";
         }
 
@@ -233,15 +243,18 @@ async function checkEmailForErrors() {
         console.log(`   Assunto: ${subject}`);
         console.log(`   Data: ${date}`);
         console.log(`   Tamanho do corpo: ${emailBody.length} caracteres`);
+        log('info', `Analyzing email: Subject: ${subject}, Date: ${date}`);
 
         const prompt = "Analise o corpo do e-mail. Determine se ele está reportando um erro no sistema. Se sim, qual é o erro principal? Responda de forma concisa 'SUCESSO (Sem Erros Reportados)' ou 'ERRO: [descrição do erro]'.";
         
         const analysisResult = await analyzeContentWithGemini(emailBody, prompt);
+        log('info', `Email analysis result: ${analysisResult}`);
         
         return analysisResult;
 
     } catch (error) {
         console.error(`❌ ERRO ao processar e-mails: ${error.message}`);
+        log('error', `Error processing emails: ${error.message}`);
         return "Erro: Falha ao se comunicar com a API do Gmail ou processar e-mails.";
     } 
     // Não há client.logout() na API do Google, a autenticação é persistente no token.json
@@ -259,6 +272,7 @@ async function checkEmailForErrors() {
  */
 async function checkXcopyLogSuccess(logFilePath) {
   console.log(`\n### 📄 Análise de Log: Lendo arquivo: ${logFilePath}`);
+  log('info', `Checking xcopy log file: ${logFilePath}`);
   try {
     // Usa fsp (fs/promises)
     const logContent = await fsp.readFile(logFilePath, 'utf-8');
@@ -275,11 +289,13 @@ async function checkXcopyLogSuccess(logFilePath) {
     const prompt = "Analise o log do XCOPY fornecido. Determine se a operação foi concluída com sucesso (sem 'Access denied' ou erros graves). Responda apenas 'SUCESSO' se tudo estiver OK, ou 'FALHA: [motivo do erro mais relevante]' se houver problemas.";
     
     const analysisResult = await analyzeContentWithGemini(relevantContent, prompt);
+    log('info', `Xcopy log analysis result: ${analysisResult}`);
     
     return analysisResult;
 
   } catch (error) {
     console.error(`❌ ERRO ao ler o arquivo de log: ${error.message}`);
+    log('error', `Error reading xcopy log file: ${error.message}`);
     
     // Cria um arquivo de log de exemplo se ele não for encontrado (ENOENT)
     if (error.code === 'ENOENT') {
@@ -298,6 +314,7 @@ async function checkXcopyLogSuccess(logFilePath) {
 // =========================================================================
 
 async function main() {
+    await initialize();
     console.log("==============================================");
     console.log("       SISTEMA DE MONITORAMENTO GEMINI        ");
     console.log("==============================================");

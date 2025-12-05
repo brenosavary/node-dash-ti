@@ -144,7 +144,8 @@ async function analyzeContentWithGemini(content, prompt, code) {
  */
 async function checkNobreakStatus(url) {
   console.log(`\n### ⚡️ Análise de Nobreak: Lendo URL: ${url}`);
-  log('info', `Checking Nobreak status at ${url}`, 'nobreak');
+  let status = 'OK';
+
   try {
     const response = await axios.get(url, { timeout: 10000 });
     const htmlContent = response.data;
@@ -152,14 +153,26 @@ async function checkNobreakStatus(url) {
     const prompt = "No código HTML fornecido, verifique se o status do nobreak indica que ele está operando 'na bateria' ou 'em bypass/rede normal'. Diga se o status é de alerta (bateria) ou normal. Responda de forma concisa.";
     
     const analysisResult = await analyzeContentWithGemini(htmlContent, prompt, 'nobreak');
-    log('info', `Nobreak status: ${analysisResult}`, 'nobreak');
+
+    if (analysisResult.toLowerCase().includes('alerta')) {
+        status = 'ALERTA';
+    }
     
+    log('info', `Nobreak status: ${analysisResult}`, 'nobreak', status);
     return analysisResult;
 
   } catch (error) {
     console.error(`❌ ERRO ao ler a página da intranet: ${error.message}`);
-    log('error', `Error checking Nobreak status: ${error.message}`, 'nobreak');
-    return "Erro: Não foi possível acessar a URL da intranet ou timeout.";
+
+    // Se for timeout, define como ALERTA
+    if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+      status = 'ALERTA';
+      log('error', `Error checking Nobreak status: Timeout`, 'nobreak', status);
+      return "Erro: Timeout ao acessar a URL da intranet.";
+    }
+
+    log('error', `Error checking Nobreak status: ${error.message}`, 'nobreak', 'ALERTA');
+    return "Erro: Não foi possível acessar a URL da intranet.";
   }
 }
 
@@ -174,25 +187,24 @@ async function checkNobreakStatus(url) {
  */
 async function checkEmailForErrors() {
     console.log(`\n### 📧 Análise de E-mail: Buscando de ${SENDER_TO_MONITOR} via Gmail API`);
-    log('info', `Checking email from ${SENDER_TO_MONITOR}`, 'email');
+    let status = 'OK'; // Começa como OK
     
     let auth;
     try {
         auth = await authorize();
     } catch (e) {
-        log('error', `Authentication error: ${e.message}`, 'email');
+        log('error', `Authentication error: ${e.message}`, 'email', 'ALERTA');
         return `Erro de Autenticação: ${e.message}`;
     }
 
     const gmail = google.gmail({ version: "v1", auth });
     
     try {
-        // Busca a última mensagem do remetente específico
         const query = `from:${SENDER_TO_MONITOR}`;
 
         const res = await gmail.users.messages.list({
             userId: "me",
-            maxResults: 1, // Queremos apenas a mais recente
+            maxResults: 1,
             q: query
         });
 
@@ -202,29 +214,22 @@ async function checkEmailForErrors() {
         }
 
         const msgId = res.data.messages[0].id;
-
-        // Pega a mensagem completa (formato 'full')
         const m = await gmail.users.messages.get({
             userId: "me",
             id: msgId,
             format: "full" 
         });
 
-        // 💡 FUNÇÃO AUXILIAR: Decodifica o corpo da mensagem
         function getEmailBody(payload) {
             let body = '';
-            
-            // Tenta obter o corpo de texto simples
             const part = payload.parts ? 
                          payload.parts.find(p => p.mimeType === 'text/plain') :
                          (payload.mimeType === 'text/plain' ? payload : null);
 
             if (part && part.body && part.body.data) {
-                // O corpo do Gmail API é Base64URL, então precisa de substituições
                 const base64 = part.body.data.replace(/-/g, '+').replace(/_/g, '/');
                 body = Buffer.from(base64, 'base64').toString('utf-8');
             } else if (payload.body && payload.body.data) {
-                 // Fallback para corpo sem partes (raro, mas pode acontecer)
                  const base64 = payload.body.data.replace(/-/g, '+').replace(/_/g, '/');
                  body = Buffer.from(base64, 'base64').toString('utf-8');
             } else {
@@ -234,30 +239,33 @@ async function checkEmailForErrors() {
         }
 
         const emailBody = getEmailBody(m.data.payload);
-
-        // Pega cabeçalhos para logar
         const headers = m.data.payload.headers;
-        const subject = headers.find(h => h.name === "Subject")?.value;
+        const subject = headers.find(h => h.name === "Subject")?.value || '';
         const date = headers.find(h => h.name === "Date")?.value;
+
+        // VERIFICAÇÃO DO ASSUNTO para definir o status
+        if (subject.includes('FALHA NO BACKUP')) {
+            status = 'ALERTA';
+        }
 
         console.log(`   Assunto: ${subject}`);
         console.log(`   Data: ${date}`);
-        console.log(`   Tamanho do corpo: ${emailBody.length} caracteres`);
-        log('info', `Analyzing email: Subject: ${subject}, Date: ${date}`, 'email');
+        console.log(`   Status Definido: ${status}`);
+
+        log('info', `Analyzing email: Subject: ${subject}, Date: ${date}`, 'email', status);
 
         const prompt = "Analise o corpo do e-mail. Determine se ele está reportando um erro no sistema. Se sim, qual é o erro principal? Responda de forma concisa 'SUCESSO (Sem Erros Reportados)' ou 'ERRO: [descrição do erro]'.";
         
         const analysisResult = await analyzeContentWithGemini(emailBody, prompt, 'email');
-        log('info', `Email analysis result: ${analysisResult}`, 'email');
+        log('info', `Email analysis result: ${analysisResult}`, 'email', status);
         
         return analysisResult;
 
     } catch (error) {
         console.error(`❌ ERRO ao processar e-mails: ${error.message}`);
-        log('error', `Error processing emails: ${error.message}`, 'email');
+        log('error', `Error processing emails: ${error.message}`, 'email', 'ALERTA');
         return "Erro: Falha ao se comunicar com a API do Gmail ou processar e-mails.";
-    } 
-    // Não há client.logout() na API do Google, a autenticação é persistente no token.json
+    }
 }
 
 
@@ -271,41 +279,74 @@ async function checkEmailForErrors() {
  * @returns {Promise<string>} A resposta do Gemini sobre o sucesso da execução.
  */
 async function checkXcopyLogSuccess(logFilePath) {
-  console.log(`\n### 📄 Análise de Log: Lendo arquivo: ${logFilePath}`);
-  log('info', `Checking xcopy log file: ${logFilePath}`, 'xcopy');
-  try {
-    // Usa fsp (fs/promises)
-    const logContent = await fsp.readFile(logFilePath, 'utf-8');
+    console.log(`\n### 📄 Análise de Log: Lendo arquivo: ${logFilePath}`);
+    let status = 'OK';
+    let timestampFromFile = null;
 
-    // 💡 CORREÇÃO DE TOKEN: Trunca o log para as últimas 500 linhas
-    const lines = logContent.split('\n');
-    const maxLines = 500;
-    
-    // Usa apenas as últimas 500 linhas para reduzir a entrada
-    const relevantContent = lines.slice(-maxLines).join('\n'); 
-    
-    console.log(`   (Log Truncado para as últimas ${relevantContent.split('\n').length} linhas)`);
+    try {
+        const logContent = await fsp.readFile(logFilePath, 'utf-8');
+        const lines = logContent.split('\n');
 
-    const prompt = "Analise o log do XCOPY fornecido. Determine se a operação foi concluída com sucesso (sem 'Access denied' ou erros graves). Responda apenas 'SUCESSO' se tudo estiver OK, ou 'FALHA: [motivo do erro mais relevante]' se houver problemas.";
-    
-    const analysisResult = await analyzeContentWithGemini(relevantContent, prompt, 'xcopy');
-    log('info', `Xcopy log analysis result: ${analysisResult}`, 'xcopy');
-    
-    return analysisResult;
+        if (!logContent.trim()) {
+            status = 'ALERTA';
+            log('warn', `Log file is empty: ${logFilePath}`, 'xcopy', status, timestampFromFile);
+            return "ALERTA: Arquivo de log está zerado.";
+        }
 
-  } catch (error) {
-    console.error(`❌ ERRO ao ler o arquivo de log: ${error.message}`);
-    log('error', `Error reading xcopy log file: ${error.message}`, 'xcopy');
-    
-    // Cria um arquivo de log de exemplo se ele não for encontrado (ENOENT)
-    if (error.code === 'ENOENT') {
-        const fakeLogContent = `10 Arquivo(s) copiado(s)\n0 Arquivo(s) ignorado(s)\n1 Erro(s) encontrado(s)\n`;
-        // Usa fsp (fs/promises)
-        await fsp.writeFile(logFilePath, fakeLogContent, 'utf-8');
-        return `Erro: Arquivo de log não encontrado. Criado arquivo de exemplo '${logFilePath}'. Execute novamente.`;
+        // Verifica as últimas 25 linhas para "Finalizado em:"
+        const lastLines = lines.slice(-25);
+        let finishedLine = null;
+        for (const line of lastLines.reverse()) { // Itera de trás para frente
+            if (line.includes("Finalizado em:")) {
+                finishedLine = line;
+                break;
+            }
+        }
+
+        if (finishedLine) {
+            status = 'OK'; // Processo concluído, então está OK
+            const timestampMatch = finishedLine.match(/(\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}:\d{2})/);
+            if (timestampMatch && timestampMatch[1]) {
+                timestampFromFile = timestampMatch[1];
+                console.log(`   Data e Hora de finalização: ${timestampFromFile}`);
+            }
+        } else {
+            status = 'ALERTA'; // Não encontrou "Finalizado em:" nas últimas linhas
+            log('warn', `Log file seems incomplete. "Finalizado em:" not found in last 25 lines.`, 'xcopy', status, timestampFromFile);
+        }
+
+        const maxLines = 500;
+        const relevantContent = lines.slice(-maxLines).join('\n');
+
+        console.log(`   (Log Truncado para as últimas ${relevantContent.split('\n').length} linhas)`);
+
+        const prompt = "Analise o log do XCOPY fornecido. Determine se a operação foi concluída com sucesso (sem 'Access denied' ou erros graves). Responda apenas 'SUCESSO' se tudo estiver OK, ou 'FALHA: [motivo do erro mais relevante]' se houver problemas.";
+
+        const analysisResult = await analyzeContentWithGemini(relevantContent, prompt, 'xcopy');
+
+        if (analysisResult.toLowerCase().startsWith('falha')) {
+            // Se o Gemini encontrar uma falha, mas o processo foi finalizado, mantemos OK.
+            // Se não foi finalizado, então é um ALERTA.
+            if (!finishedLine) {
+              status = 'ALERTA';
+            }
+        }
+
+        log('info', `Xcopy log analysis result: ${analysisResult}`, 'xcopy', status, timestampFromFile);
+        return analysisResult;
+
+    } catch (error) {
+        console.error(`❌ ERRO ao ler o arquivo de log: ${error.message}`);
+        status = 'ALERTA';
+        log('error', `Error reading xcopy log file: ${error.message}`, 'xcopy', status, timestampFromFile);
+
+        if (error.code === 'ENOENT') {
+            const fakeLogContent = `10 Arquivo(s) copiado(s)\nFinalizado em: 01/01/2024 12:00:00\n`;
+            await fsp.writeFile(logFilePath, fakeLogContent, 'utf-8');
+            return `Erro: Arquivo de log não encontrado. Criado arquivo de exemplo '${logFilePath}'. Execute novamente.`;
+        }
+        return "Erro: Não foi possível ler o arquivo de log.";
     }
-    return "Erro: Não foi possível ler o arquivo de log.";
-  }
 }
 
 

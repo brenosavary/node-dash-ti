@@ -40,16 +40,24 @@ async function createTable() {
         id INT PRIMARY KEY IDENTITY(1,1),
         timestamp DATETIME NOT NULL DEFAULT GETDATE(),
         level NVARCHAR(50) NOT NULL,
-        message NVARCHAR(MAX) NOT NULL
+        message NVARCHAR(MAX) NOT NULL,
+        status NVARCHAR(10)
       )
     `;
     try {
       await request.query(tableExistsQuery);
+
+      const columnExistsQuery = `
+        IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[OperationLogs]') AND name = 'status')
+        ALTER TABLE OperationLogs ADD status NVARCHAR(10)
+      `;
+      await request.query(columnExistsQuery);
+
       console.log('Table OperationLogs is ready');
     } catch (err) {
       console.error('Error creating table: ', err);
     }
-}
+  }
 
 async function initialize() {
     if (!initializationPromise) {
@@ -58,17 +66,18 @@ async function initialize() {
     return initializationPromise;
 }
 
-async function log(level, message) {
+async function log(level, message, status = 'OK') {
   try {
     await initialize();
     const db_pool = await connect();
     const request = db_pool.request();
     const logQuery = `
-      INSERT INTO OperationLogs (level, message)
-      VALUES (@level, @message)
+      INSERT INTO OperationLogs (level, message, status)
+      VALUES (@level, @message, @status)
     `;
     request.input('level', sql.NVarChar, level);
     request.input('message', sql.NVarChar, message);
+    request.input('status', sql.NVarChar, status);
     await request.query(logQuery);
   } catch (err) {
     console.error('Error writing to log: ', err);

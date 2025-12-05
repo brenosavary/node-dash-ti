@@ -144,7 +144,7 @@ async function analyzeContentWithGemini(content, prompt) {
  */
 async function checkNobreakStatus(url) {
   console.log(`\n### ⚡️ Análise de Nobreak: Lendo URL: ${url}`);
-  log('info', `Checking Nobreak status at ${url}`);
+  log('info', `Checking Nobreak status at ${url}`, 'OK');
   try {
     const response = await axios.get(url, { timeout: 10000 });
     const htmlContent = response.data;
@@ -152,13 +152,14 @@ async function checkNobreakStatus(url) {
     const prompt = "No código HTML fornecido, verifique se o status do nobreak indica que ele está operando 'na bateria' ou 'em bypass/rede normal'. Diga se o status é de alerta (bateria) ou normal. Responda de forma concisa.";
     
     const analysisResult = await analyzeContentWithGemini(htmlContent, prompt);
-    log('info', `Nobreak status: ${analysisResult}`);
+    const status = analysisResult.includes('bateria') || analysisResult.includes('timeout') ? 'ALERTA' : 'OK';
+    log('info', `Nobreak status: ${analysisResult}`, status);
     
     return analysisResult;
 
   } catch (error) {
     console.error(`❌ ERRO ao ler a página da intranet: ${error.message}`);
-    log('error', `Error checking Nobreak status: ${error.message}`);
+    log('error', `Error checking Nobreak status: ${error.message}`, 'ALERTA');
     return "Erro: Não foi possível acessar a URL da intranet ou timeout.";
   }
 }
@@ -174,13 +175,13 @@ async function checkNobreakStatus(url) {
  */
 async function checkEmailForErrors() {
     console.log(`\n### 📧 Análise de E-mail: Buscando de ${SENDER_TO_MONITOR} via Gmail API`);
-    log('info', `Checking email from ${SENDER_TO_MONITOR}`);
+    log('info', `Checking email from ${SENDER_TO_MONITOR}`, 'OK');
     
     let auth;
     try {
         auth = await authorize();
     } catch (e) {
-        log('error', `Authentication error: ${e.message}`);
+        log('error', `Authentication error: ${e.message}`, 'ALERTA');
         return `Erro de Autenticação: ${e.message}`;
     }
 
@@ -197,7 +198,7 @@ async function checkEmailForErrors() {
         });
 
         if (!res.data.messages || res.data.messages.length === 0) {
-            log('info', 'No new emails from the monitored sender.');
+            log('info', 'No new emails from the monitored sender.', 'OK');
             return "Nenhum e-mail encontrado do remetente monitorado no Gmail.";
         }
 
@@ -237,24 +238,26 @@ async function checkEmailForErrors() {
 
         // Pega cabeçalhos para logar
         const headers = m.data.payload.headers;
-        const subject = headers.find(h => h.name === "Subject")?.value;
+        const subject = headers.find(h => h.name === "Subject")?.value || '';
         const date = headers.find(h => h.name === "Date")?.value;
 
         console.log(`   Assunto: ${subject}`);
         console.log(`   Data: ${date}`);
         console.log(`   Tamanho do corpo: ${emailBody.length} caracteres`);
-        log('info', `Analyzing email: Subject: ${subject}, Date: ${date}`);
+
+        const status = subject.includes('FALHA NO BACKUP') ? 'ALERTA' : 'OK';
+        log('info', `Analyzing email: Subject: ${subject}, Date: ${date}`, status);
 
         const prompt = "Analise o corpo do e-mail. Determine se ele está reportando um erro no sistema. Se sim, qual é o erro principal? Responda de forma concisa 'SUCESSO (Sem Erros Reportados)' ou 'ERRO: [descrição do erro]'.";
         
         const analysisResult = await analyzeContentWithGemini(emailBody, prompt);
-        log('info', `Email analysis result: ${analysisResult}`);
+        log('info', `Email analysis result: ${analysisResult}`, status);
         
         return analysisResult;
 
     } catch (error) {
         console.error(`❌ ERRO ao processar e-mails: ${error.message}`);
-        log('error', `Error processing emails: ${error.message}`);
+        log('error', `Error processing emails: ${error.message}`, 'ALERTA');
         return "Erro: Falha ao se comunicar com a API do Gmail ou processar e-mails.";
     } 
     // Não há client.logout() na API do Google, a autenticação é persistente no token.json
@@ -272,35 +275,42 @@ async function checkEmailForErrors() {
  */
 async function checkXcopyLogSuccess(logFilePath) {
   console.log(`\n### 📄 Análise de Log: Lendo arquivo: ${logFilePath}`);
-  log('info', `Checking xcopy log file: ${logFilePath}`);
+  log('info', `Checking xcopy log file: ${logFilePath}`, 'OK');
   try {
-    // Usa fsp (fs/promises)
     const logContent = await fsp.readFile(logFilePath, 'utf-8');
 
-    // 💡 CORREÇÃO DE TOKEN: Trunca o log para as últimas 500 linhas
+    if (!logContent.trim()) {
+      log('error', 'Xcopy log file is empty.', 'ALERTA');
+      return 'FALHA: Arquivo de log vazio.';
+    }
+
     const lines = logContent.split('\n');
-    const maxLines = 500;
-    
-    // Usa apenas as últimas 500 linhas para reduzir a entrada
-    const relevantContent = lines.slice(-maxLines).join('\n'); 
-    
+    const lastLine = lines[lines.length - 2] || '';
+    const match = lastLine.match(/(\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}:\d{2})/);
+    const timestamp = match ? match[1] : 'N/A';
+
+    if (!lastLine.includes('Arquivo(s) copiado(s)')) {
+      log('error', 'Xcopy log file appears incomplete.', 'ALERTA');
+      return 'FALHA: O log de cópia de arquivos parece não ter sido concluído.';
+    }
+
+    const relevantContent = lines.slice(-500).join('\n');
     console.log(`   (Log Truncado para as últimas ${relevantContent.split('\n').length} linhas)`);
 
     const prompt = "Analise o log do XCOPY fornecido. Determine se a operação foi concluída com sucesso (sem 'Access denied' ou erros graves). Responda apenas 'SUCESSO' se tudo estiver OK, ou 'FALHA: [motivo do erro mais relevante]' se houver problemas.";
     
     const analysisResult = await analyzeContentWithGemini(relevantContent, prompt);
-    log('info', `Xcopy log analysis result: ${analysisResult}`);
+    const status = analysisResult.startsWith('FALHA') ? 'ALERTA' : 'OK';
+    log('info', `Xcopy log analysis result: ${analysisResult} (Timestamp from log: ${timestamp})`, status);
     
     return analysisResult;
 
   } catch (error) {
     console.error(`❌ ERRO ao ler o arquivo de log: ${error.message}`);
-    log('error', `Error reading xcopy log file: ${error.message}`);
+    log('error', `Error reading xcopy log file: ${error.message}`, 'ALERTA');
     
-    // Cria um arquivo de log de exemplo se ele não for encontrado (ENOENT)
     if (error.code === 'ENOENT') {
         const fakeLogContent = `10 Arquivo(s) copiado(s)\n0 Arquivo(s) ignorado(s)\n1 Erro(s) encontrado(s)\n`;
-        // Usa fsp (fs/promises)
         await fsp.writeFile(logFilePath, fakeLogContent, 'utf-8');
         return `Erro: Arquivo de log não encontrado. Criado arquivo de exemplo '${logFilePath}'. Execute novamente.`;
     }

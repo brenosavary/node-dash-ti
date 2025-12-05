@@ -39,6 +39,7 @@ async function createTable() {
       CREATE TABLE OperationLogs (
         id INT PRIMARY KEY IDENTITY(1,1),
         timestamp DATETIME NOT NULL DEFAULT GETDATE(),
+        code NVARCHAR(50) NOT NULL,
         level NVARCHAR(50) NOT NULL,
         message NVARCHAR(MAX) NOT NULL
       )
@@ -58,17 +59,18 @@ async function initialize() {
     return initializationPromise;
 }
 
-async function log(level, message) {
+async function log(level, message, code) {
   try {
     await initialize();
     const db_pool = await connect();
     const request = db_pool.request();
     const logQuery = `
-      INSERT INTO OperationLogs (level, message)
-      VALUES (@level, @message)
+      INSERT INTO OperationLogs (level, message, code)
+      VALUES (@level, @message, @code)
     `;
     request.input('level', sql.NVarChar, level);
     request.input('message', sql.NVarChar, message);
+    request.input('code', sql.NVarChar, code);
     await request.query(logQuery);
   } catch (err) {
     console.error('Error writing to log: ', err);
